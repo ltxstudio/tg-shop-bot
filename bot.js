@@ -109,3 +109,133 @@ bot.command('addproduct', async (ctx) => {
   });
 });
 
+// Manage Orders
+bot.command('manage_orders', async (ctx) => {
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
+    return ctx.reply('Unauthorized access.');
+  }
+
+  const orders = await Order.find({ status: 'pending' }).populate('productId');
+
+  if (orders.length === 0) {
+    return ctx.reply('No pending orders.');
+  }
+
+  orders.forEach((order) => {
+    ctx.replyWithPhoto(order.productId.imageUrl, {
+      caption: `Order by @${order.userId}\nProduct: ${order.productId.name}\nAmount: $${order.amount}\n\nApprove or Cancel this order?`,
+      ...Markup.inlineKeyboard([
+        Markup.button.callback('✅ Approve', `approve_${order._id}`),
+        Markup.button.callback('❌ Cancel', `cancel_${order._id}`),
+      ]),
+    });
+  });
+});
+
+// Handle Approve/Cancel
+bot.action(/^approve_(.+)$/, async (ctx) => {
+  const orderId = ctx.match[1];
+  const order = await Order.findById(orderId);
+
+  if (!order) {
+    return ctx.reply('Order not found.');
+  }
+
+  order.status = 'paid';
+  await order.save();
+  bot.telegram.sendMessage(order.userId, 'Your order has been approved! 🎉');
+  ctx.reply('Order approved.');
+});
+
+bot.action(/^cancel_(.+)$/, async (ctx) => {
+  const orderId = ctx.match[1];
+  const order = await Order.findById(orderId);
+
+  if (!order) {
+    return ctx.reply('Order not found.');
+  }
+
+  order.status = 'canceled';
+  await order.save();
+  bot.telegram.sendMessage(order.userId, 'Your order has been canceled.');
+  ctx.reply('Order canceled.');
+});
+
+// Add to Wishlist
+bot.action(/^wishlist_add_(.+)$/, async (ctx) => {
+  const productId = ctx.match[1];
+  const user = ctx.state.user;
+
+  if (user.wishlist.includes(productId)) {
+    return ctx.reply('This product is already in your wishlist.');
+  }
+
+  user.wishlist.push(productId);
+  await user.save();
+  ctx.reply('Product added to your wishlist!');
+});
+
+// View Wishlist
+bot.command('wishlist', async (ctx) => {
+  const user = await User.findById(ctx.state.user._id).populate('wishlist');
+
+  if (user.wishlist.length === 0) {
+    return ctx.reply('Your wishlist is empty.');
+  }
+
+  user.wishlist.forEach((product) => {
+    const priceAfterDiscount = product.price - (product.price * product.discount) / 100;
+    ctx.replyWithPhoto(product.imageUrl, {
+      caption: `${product.name}\n${product.description}\nPrice: $${priceAfterDiscount}`,
+      ...Markup.inlineKeyboard([Markup.button.callback('🛒 Buy Now', `buy_${product._id}`)]),
+    });
+  });
+});
+
+bot.command('search', (ctx) => {
+  ctx.reply('Enter the name of the product you are looking for:');
+  bot.on('text', async (ctx) => {
+    const query = ctx.message.text.toLowerCase();
+    const products = await Product.find({ name: { $regex: query, $options: 'i' } });
+
+    if (products.length === 0) {
+      return ctx.reply('No products found.');
+    }
+
+    products.forEach((product) => {
+      const priceAfterDiscount = product.price - (product.price * product.discount) / 100;
+      ctx.replyWithPhoto(product.imageUrl, {
+        caption: `${product.name}\n${product.description}\nPrice: $${priceAfterDiscount}`,
+        ...Markup.inlineKeyboard([Markup.button.callback('🛒 Buy Now', `buy_${product._id}`)]),
+      });
+    });
+  });
+});
+
+bot.command('orders', async (ctx) => {
+  const orders = await Order.find({ userId: ctx.state.user.telegramId }).populate('productId');
+
+  if (orders.length === 0) {
+    return ctx.reply('You have no orders.');
+  }
+
+  orders.forEach((order) => {
+    const statusEmoji = order.status === 'paid' ? '✅' : order.status === 'canceled' ? '❌' : '⏳';
+    ctx.replyWithPhoto(order.productId.imageUrl, {
+      caption: `🛒 *Order Details*\n\n📦 Product: ${order.productId.name}\n💵 Price: $${order.amount}\n🗓 Date: ${order.createdAt}\n\nStatus: ${statusEmoji} ${order.status}`,
+      parse_mode: 'Markdown',
+    });
+  });
+});
+
+bot.command('contact', (ctx) => {
+  ctx.reply(
+    'Please send your message to the support team. Type your query below:'
+  );
+  bot.on('text', async (ctx) => {
+    const adminId = process.env.ADMIN_ID;
+    const userMessage = ctx.message.text;
+    await bot.telegram.sendMessage(adminId, `New Support Query from @${ctx.from.username}:\n\n${userMessage}`);
+    ctx.reply('Your message has been sent to the support team. They will respond soon!');
+  });
+});
