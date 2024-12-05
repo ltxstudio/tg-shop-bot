@@ -88,6 +88,146 @@ bot.command('my_orders', async (ctx) => {
   });
 });
 
+bot.command('admin', (ctx) => {
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
+    return ctx.reply('❌ Unauthorized access.');
+  }
+
+  ctx.reply(
+    '👨‍💻 Admin Panel',
+    Markup.keyboard([
+      ['➕ Add Product', '🛒 Manage Orders'],
+      ['📊 Stats', '🔙 Back to Main'],
+    ]).resize()
+  );
+});
+
+bot.command('addproduct', (ctx) => {
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
+    return ctx.reply('❌ Unauthorized access.');
+  }
+
+  ctx.reply('📦 Enter product details in the format:\n\n`Name | Description | Price | Discount | Image URL | Category`', {
+    parse_mode: 'Markdown',
+  });
+
+  bot.on('text', async (ctx) => {
+    const [name, description, price, discount, imageUrl, category] = ctx.message.text.split('|').map((item) => item.trim());
+
+    if (!name || !price || !imageUrl) {
+      return ctx.reply('❌ Invalid input. Please provide all required fields.');
+    }
+
+    const newProduct = new Product({ name, description, price, discount, imageUrl, category });
+    await newProduct.save();
+
+    ctx.reply('✅ Product added successfully!');
+  });
+});
+
+bot.command('manage_orders', async (ctx) => {
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
+    return ctx.reply('❌ Unauthorized access.');
+  }
+
+  const orders = await Order.find({ status: 'pending' }).populate('productId');
+
+  if (orders.length === 0) {
+    return ctx.reply('📦 No pending orders.');
+  }
+
+  orders.forEach((order) => {
+    ctx.replyWithPhoto(order.productId.imageUrl, {
+      caption: `🛒 *Order Details*\n\nUser ID: ${order.userId}\nProduct: ${order.productId.name}\nAmount: $${order.amount}\n\nApprove or Cancel this order?`,
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        Markup.button.callback('✅ Approve', `approve_${order._id}`),
+        Markup.button.callback('❌ Cancel', `cancel_${order._id}`),
+      ]),
+    });
+  });
+});
+
+// Approve/Cancel Orders
+bot.action(/^approve_(.+)$/, async (ctx) => {
+  const orderId = ctx.match[1];
+  const order = await Order.findById(orderId);
+
+  if (!order) return ctx.reply('❌ Order not found.');
+
+  order.status = 'paid';
+  await order.save();
+
+  // Notify user
+  bot.telegram.sendMessage(order.userId, '✅ Your order has been approved!');
+  ctx.reply('✅ Order approved.');
+});
+
+bot.action(/^cancel_(.+)$/, async (ctx) => {
+  const orderId = ctx.match[1];
+  const order = await Order.findById(orderId);
+
+  if (!order) return ctx.reply('❌ Order not found.');
+
+  order.status = 'canceled';
+  await order.save();
+
+  // Notify user
+  bot.telegram.sendMessage(order.userId, '❌ Your order has been canceled.');
+  ctx.reply('❌ Order canceled.');
+});
+
+// Add to Wishlist
+bot.action(/^wishlist_add_(.+)$/, async (ctx) => {
+  const productId = ctx.match[1];
+  const user = ctx.state.user;
+
+  if (user.wishlist.includes(productId)) {
+    return ctx.reply('This product is already in your wishlist.');
+  }
+
+  user.wishlist.push(productId);
+  await user.save();
+  ctx.reply('Product added to your wishlist!');
+});
+
+// View Wishlist
+bot.command('wishlist', async (ctx) => {
+  const user = await User.findById(ctx.state.user._id).populate('wishlist');
+
+  if (user.wishlist.length === 0) {
+    return ctx.reply('Your wishlist is empty.');
+  }
+
+  user.wishlist.forEach((product) => {
+    const priceAfterDiscount = product.price - (product.price * product.discount) / 100;
+    ctx.replyWithPhoto(product.imageUrl, {
+      caption: `${product.name}\n${product.description}\nPrice: $${priceAfterDiscount}`,
+      ...Markup.inlineKeyboard([Markup.button.callback('🛒 Buy Now', `buy_${product._id}`)]),
+    });
+  });
+});
+
+bot.command('search', (ctx) => {
+  ctx.reply('Enter the name of the product you are looking for:');
+  bot.on('text', async (ctx) => {
+    const query = ctx.message.text.toLowerCase();
+    const products = await Product.find({ name: { $regex: query, $options: 'i' } });
+
+    if (products.length === 0) {
+      return ctx.reply('No products found.');
+    }
+
+    products.forEach((product) => {
+      const priceAfterDiscount = product.price - (product.price * product.discount) / 100;
+      ctx.replyWithPhoto(product.imageUrl, {
+        caption: `${product.name}\n${product.description}\nPrice: $${priceAfterDiscount}`,
+        ...Markup.inlineKeyboard([Markup.button.callback('🛒 Buy Now', `buy_${product._id}`)]),
+      });
+    });
+  });
+});
+
 // Command: Wishlist
 bot.command('wishlist', (ctx) => {
   // Placeholder for future wishlist implementation
