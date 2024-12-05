@@ -6,6 +6,7 @@ const orderSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   status: { type: String, default: 'pending' }, // pending, paid, canceled
   paymentId: String,
+  notified: { type: Boolean, default: false }, // Notify user after status update
   createdAt: { type: Date, default: Date.now },
 });
 
